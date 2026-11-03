@@ -51,29 +51,29 @@ sequenceDiagram
     end
 ```
 
-### Rollback senaryosu — adım adım
+### Rollback scenario — step by step
 
-Diyelim ki müşteri bir ürün sipariş etti ama ödeme reddedildi (yetersiz bakiye, kart hatası, 3DS iptal). Olaylar sırayla:
+Say a customer places an order, but the payment is declined (insufficient funds, card error, 3DS cancelled). The sequence of events:
 
-1. `POST /api/v1/orders` → `OrderController` isteği kabul eder, `SagaOrchestrator.startOrderSaga()` çağrılır.
-2. Orchestrator yeni bir `SagaInstance` yaratır (`STARTED`, step: `RESERVE_STOCK`), MongoDB'ye kaydeder, Rabbit üzerinden `stock.reserve` komutunu yollar.
-3. `StockService` dinler, Mongo'ya `RES-XXXXXXXX` ID'li reservation (`RESERVED`) açar, `stock.reserved` sonuç event'ini yayınlar.
-4. Orchestrator sonucu yakalar: saga `EXECUTING` + `PROCESS_PAYMENT` adımına geçer, `payment.process` komutunu yollar.
-5. `PaymentService` komutu alır — bu POC'de `saga.simulation.payment-failure-rate` (varsayılan 0.30) ile rastgele başarı/başarısızlık üretir. Diyelim bu sefer `DECLINED`. `payment.failed` sonuç event'ini yayınlar.
-6. Orchestrator sonucu yakalar: saga `COMPENSATING` durumuna girer, step `COMPENSATE_STOCK`'a geçer, `stock.compensate` komutunu yollar (reservation ID ile birlikte).
-7. `StockService` komutu alır, Mongo'da reservation'ı `REVERTED` olarak işaretler, `stock.compensated` event'ini yollar.
-8. Orchestrator sonucu yakalar: step history'ye `COMPENSATED` kaydı eklenir, saga `FAILED` olarak terminal duruma geçer.
+1. `POST /api/v1/orders` — `OrderController` accepts the request and invokes `SagaOrchestrator.startOrderSaga()`.
+2. The orchestrator creates a new `SagaInstance` (`STARTED`, step: `RESERVE_STOCK`), persists it to MongoDB, and dispatches a `stock.reserve` command via RabbitMQ.
+3. `StockService` consumes the command, opens a reservation `RES-XXXXXXXX` (`RESERVED`) in Mongo, and publishes a `stock.reserved` result event.
+4. The orchestrator consumes the result: the saga transitions to `EXECUTING` + `PROCESS_PAYMENT`, and a `payment.process` command is dispatched.
+5. `PaymentService` receives the command — in this POC it uses `saga.simulation.payment-failure-rate` (default 0.30) to randomly succeed or fail. Suppose it `DECLINED` this time; it publishes a `payment.failed` result event.
+6. The orchestrator consumes the result: the saga enters `COMPENSATING`, the step moves to `COMPENSATE_STOCK`, and a `stock.compensate` command is dispatched (with the reservation ID attached).
+7. `StockService` consumes the command, marks the reservation as `REVERTED` in Mongo, and publishes a `stock.compensated` event.
+8. The orchestrator consumes the result: a `COMPENSATED` record is appended to the step history, and the saga enters its terminal `FAILED` state.
 
-Sonuçta MongoDB'de:
-- `saga_instances` — saga dokümanı, `status: FAILED`, tüm step geçmişi (başarılar + fail + compensation).
-- `stock_reservations` — reservation `REVERTED`, kaç kez yapıldı/geri alındı audit edilebilir.
-- `payment_attempts` — payment attempt `DECLINED` olarak kalır.
+End state in MongoDB:
+- `saga_instances` — saga document, `status: FAILED`, full step history (successes + failure + compensation).
+- `stock_reservations` — reservation marked `REVERTED`; every reserve/revert is auditable.
+- `payment_attempts` — the payment attempt remains as `DECLINED`.
 
-Hiçbir satır "kaybolmaz". Her adımın hem commit'i hem rollback'i audit-logged.
+Nothing is "lost". Every step's commit and its rollback are audit-logged.
 
-## Teknoloji Stack'i
+## Technology Stack
 
-| Katman | Seçim |
+| Layer | Choice |
 | --- | --- |
 | Language | Java 21 |
 | Framework | Spring Boot 3.3 |
@@ -83,17 +83,17 @@ Hiçbir satır "kaybolmaz". Her adımın hem commit'i hem rollback'i audit-logge
 | Metrics | Micrometer + Prometheus |
 | Tests | JUnit 5 + Testcontainers + Awaitility |
 
-## Çalıştırma
+## Running
 
-Tek komut:
+One command:
 
 ```bash
 docker-compose up --build
 ```
 
-Bu komutla MongoDB, RabbitMQ ve uygulama ayağa kalkar.
+That starts MongoDB, RabbitMQ and the application.
 
-| Servis | URL |
+| Service | URL |
 | --- | --- |
 | API | http://localhost:8080 |
 | Swagger UI | http://localhost:8080/swagger-ui.html |
@@ -107,13 +107,13 @@ docker-compose up -d mongo rabbitmq
 ./mvnw spring-boot:run
 ```
 
-### Testler
+### Tests
 
 ```bash
 ./mvnw test
 ```
 
-### Hızlı deneme
+### Quick try
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/orders \
@@ -128,15 +128,15 @@ curl -X POST http://localhost:8080/api/v1/orders \
   }'
 ```
 
-Yanıt içinde `correlationId` döner. Birkaç saniye sonra:
+The response contains a `correlationId`. After a few seconds:
 
 ```bash
 curl http://localhost:8080/api/v1/orders/sagas/<correlationId>
 ```
 
-Status `COMPLETED` ya da `FAILED` olmuş olur; `history` alanında her adımın başarı/başarısızlık/compensation kaydı görünür. 10-20 kere POST yap → yaklaşık %30'u fail eder ve compensation tetiklenir.
+The status will be either `COMPLETED` or `FAILED`; the `history` field records every step's success/failure/compensation. POST 10-20 times — roughly 30% will fail and trigger a compensation.
 
-## Proje Yapısı
+## Project Layout
 
 ```
 src/main/java/com/ruvi/saga/
@@ -153,14 +153,14 @@ src/main/java/com/ruvi/saga/
     └── persistence/           SagaInstanceRepository (Mongo)
 ```
 
-## Design kararları
+## Design decisions
 
-**Orchestration, choreography değil.** Choreography'de her servis diğerinin event'ini dinler, iş akışı yazılı değildir — sadece emergent'tır. 3 adımlık bir workflow'da hangi event hangisini tetikler, debugging gecesi "wiki + grep" turnuvasıdır. Orchestration'da state tek yerde (`SagaOrchestrator` + `saga_instances` koleksiyonu), workflow kod olarak okunur, yeni adım eklemek `onX / dispatch` çifti eklemek demektir.
+**Orchestration, not choreography.** In choreography each service listens for the next service's event; the workflow is never written down, it only emerges. In a three-step workflow, "which event triggers which" becomes a wiki-plus-grep tournament during the next incident. In orchestration the state lives in one place (`SagaOrchestrator` + the `saga_instances` collection), the workflow reads as code, and adding a new step is just one more `onX / dispatch` pair.
 
-**Async messaging, sync HTTP değil.** `OrderController` isteği `202 Accepted` + current saga state döner, sonra orchestrator ile step service'leri sadece RabbitMQ üzerinden konuşur. HTTP sync olsaydı Payment Service'in down olması bütün akışı patlatırdı; RabbitMQ ile Payment Service kalksın, 5 dakika sonra kalksın — command queue'da bekler, kalkınca işler.
+**Async messaging, not sync HTTP.** `OrderController` returns `202 Accepted` plus the current saga state, and the orchestrator and step services communicate only over RabbitMQ afterwards. With sync HTTP, Payment Service being down would break the whole flow; with RabbitMQ, Payment Service can go down and come back five minutes later — the command sits in the queue and is processed when the service recovers.
 
-**State makinası `SagaInstance` içinde.** `SagaStep` enum = düğüm, `SagaStatus` = genel durum, `history` listesi = audit trail. State machine implementasyonu için ayrı bir library (Spring State Machine) kullanmadık çünkü 3 adımlık bir workflow için framework overhead'i okunurluğu bozuyor — switch/case + status geçişleri yeterli ve test etmesi kolay.
+**State machine inside `SagaInstance`.** The `SagaStep` enum is a node, `SagaStatus` is the overall state, and the `history` list is the audit trail. No separate state-machine library (e.g. Spring State Machine) is used because the framework overhead hurts readability for a three-step workflow — a switch/case plus status transitions is enough and far easier to test.
 
-**MongoDB optimistic locking.** `SagaInstance` üzerinde `@Version` var; aynı saga için iki result event aynı anda gelirse ikincisi `OptimisticLockingFailureException` alır ve retry edilir (Rabbit retry policy devrede). "Lost update" ihtimali kapanıyor.
+**MongoDB optimistic locking.** `SagaInstance` carries `@Version`; if two result events for the same saga arrive at once, the second gets an `OptimisticLockingFailureException` and is retried (RabbitMQ retry policy is enabled). The "lost update" window is closed.
 
-**Simüle edilen başarısızlık oranı.** `PaymentService` gerçek bir ödeme yapmıyor — `saga.simulation.payment-failure-rate` ile rastgele reddediyor (varsayılan %30). Böylece compensation path'ini canlı görmek için 10-20 kere POST atmak yeterli.
+**Simulated failure rate.** `PaymentService` doesn't call a real payment gateway — it randomly declines according to `saga.simulation.payment-failure-rate` (default 30%). This way 10-20 POSTs are enough to see the compensation path exercise itself live.
