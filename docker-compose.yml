@@ -1,0 +1,37 @@
+services:
+  mongo:
+    image: mongo:7
+    ports: ["27017:27017"]
+    volumes: ["mongodata:/data/db"]
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand({ ping: 1 })"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: saga
+      RABBITMQ_DEFAULT_PASS: saga
+    ports: ["5672:5672", "15672:15672"]
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build: .
+    depends_on:
+      mongo:    { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
+    environment:
+      MONGO_URI: mongodb://mongo:27017/saga
+      RABBIT_HOST: rabbitmq
+      RABBIT_USER: saga
+      RABBIT_PASSWORD: saga
+    ports: ["8080:8080"]
+
+volumes:
+  mongodata:

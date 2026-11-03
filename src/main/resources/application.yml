@@ -1,0 +1,58 @@
+spring:
+  application:
+    name: saga-orchestration
+  data:
+    mongodb:
+      uri: ${MONGO_URI:mongodb://localhost:27017/saga}
+      auto-index-creation: true
+  rabbitmq:
+    host: ${RABBIT_HOST:localhost}
+    port: ${RABBIT_PORT:5672}
+    username: ${RABBIT_USER:saga}
+    password: ${RABBIT_PASSWORD:saga}
+    listener:
+      simple:
+        acknowledge-mode: auto
+        prefetch: 16
+        retry:
+          enabled: true
+          max-attempts: 5
+          initial-interval: 500ms
+          multiplier: 2
+          max-interval: 10s
+
+saga:
+  rabbit:
+    exchange: saga.commands
+    results-exchange: saga.results
+    stock-queue: saga.stock
+    payment-queue: saga.payment
+    results-queue: saga.results
+  simulation:
+    payment-failure-rate: 0.3
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: when-authorized
+
+server:
+  port: ${SERVER_PORT:8080}
+  shutdown: graceful
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    operations-sorter: method
+    tags-sorter: alpha
+
+logging:
+  level:
+    root: INFO
+    com.ruvi.saga: DEBUG

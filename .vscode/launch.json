@@ -1,0 +1,18 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "java",
+      "name": "Run SagaOrchestrationApplication",
+      "request": "launch",
+      "mainClass": "com.ruvi.saga.SagaOrchestrationApplication",
+      "projectName": "saga-orchestration",
+      "env": {
+        "MONGO_URI": "mongodb://localhost:27017/saga",
+        "RABBIT_HOST": "localhost",
+        "RABBIT_USER": "saga",
+        "RABBIT_PASSWORD": "saga"
+      }
+    }
+  ]
+}
